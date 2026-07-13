@@ -1,0 +1,181 @@
+micrograd.cpp:14:3: warning: inline variables are only available with '-std=c++17' or '-std=gnu++17'
+   14 |   inline static size_t currentID;
+      |   ^~~~~~
+micrograd.cpp:79:22: error: 'std::shared_ptr' is not a type
+   79 |  void buildtopo(std::shared_ptr v, std::unordered_set<Value>, Hash>& visited, std::vector<Value>& topo){
+      |                      ^~~~~~~~~~
+micrograd.cpp:79:63: error: 'Hash' has not been declared
+   79 |  void buildtopo(std::shared_ptr v, std::unordered_set<Value>, Hash>& visited, std::vector<Value>& topo){
+      |                                                               ^~~~
+micrograd.cpp:79:67: error: expected ',' or '...' before '>' token
+   79 |  void buildtopo(std::shared_ptr v, std::unordered_set<Value>, Hash>& visited, std::vector<Value>& topo){
+      |                                                                   ^
+micrograd.cpp: In static member function 'static Value Value::create(float, const string&)':
+micrograd.cpp:27:16: error: could not convert 'std::shared_ptr<Value>(((Value::currentID ++), (operator new(72), (<statement>, ((Value*)<anonymous>)))))' from 'std::shared_ptr<Value>' to 'Value'
+   27 |    return std::shared_ptr<Value>(new Value(data, op, Value::currentID++))
+      |                ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+      |                |
+      |                std::shared_ptr<Value>
+micrograd.cpp:27:74: error: expected ';' before '}' token
+   27 |    return std::shared_ptr<Value>(new Value(data, op, Value::currentID++))
+      |                                                                          ^
+      |                                                                          ;
+   28 |   }
+      |   ~                                                                       
+micrograd.cpp: In static member function 'static ValuePtr Value::add(const ValuePtr&, const ValuePtr&)':
+micrograd.cpp:35:19: error: expected primary-expression before '.' token
+   35 |   auto out = Value.create(lhs->data + rhs->data, "+");
+      |                   ^
+micrograd.cpp: In lambda function:
+micrograd.cpp:38:29: error: 'out_weak' was not declared in this scope
+   38 |    lhs_weak.lock()->grad += out_weak.lock()->grad;
+      |                             ^~~~~~~~
+micrograd.cpp: In static member function 'static ValuePtr Value::substract(const ValuePtr&, const ValuePtr&)':
+micrograd.cpp:45:19: error: expected primary-expression before '.' token
+   45 |   auto out = Value.create(lhs->data - rhs->data, "-");
+      |                   ^
+micrograd.cpp: In lambda function:
+micrograd.cpp:48:29: error: 'out_weak' was not declared in this scope
+   48 |    lhs_weak.lock()->grad += out_weak.lock()->grad * rhs;
+      |                             ^~~~~~~~
+micrograd.cpp:48:53: error: 'rhs' is not captured
+   48 |    lhs_weak.lock()->grad += out_weak.lock()->grad * rhs;
+      |                                                     ^~~
+micrograd.cpp:47:132: note: the lambda has no capture-default
+   47 |   out->backward = [lhs_weak = std::weak_ptr<Value>(lhs), rhs_weak = std::weak_ptr<Value>(rhs), out_weak = std::weak_ptr<Value>(out)](){
+      |                                                                                                                                    ^
+micrograd.cpp:44:65: note: 'const ValuePtr& rhs' declared here
+   44 |  static ValuePtr substract(const ValuePtr &lhs, const ValuePtr &rhs){
+      |                                                 ~~~~~~~~~~~~~~~~^~~
+micrograd.cpp:49:53: error: 'lhs' is not captured
+   49 |    rhs_weak.lock()->grad -= out_weak.lock()->grad * lhs;
+      |                                                     ^~~
+micrograd.cpp:47:132: note: the lambda has no capture-default
+   47 |   out->backward = [lhs_weak = std::weak_ptr<Value>(lhs), rhs_weak = std::weak_ptr<Value>(rhs), out_weak = std::weak_ptr<Value>(out)](){
+      |                                                                                                                                    ^
+micrograd.cpp:44:44: note: 'const ValuePtr& lhs' declared here
+   44 |  static ValuePtr substract(const ValuePtr &lhs, const ValuePtr &rhs){
+      |                            ~~~~~~~~~~~~~~~~^~~
+micrograd.cpp: In static member function 'static ValuePtr Value::multiply(const ValuePtr&, const ValuePtr&)':
+micrograd.cpp:55:19: error: expected primary-expression before '.' token
+   55 |   auto out = Value.create(lhs->data * rhs->data, "*");
+      |                   ^
+micrograd.cpp:55:27: error: 'lhs' was not declared in this scope; did you mean 'rhs'?
+   55 |   auto out = Value.create(lhs->data * rhs->data, "*");
+      |                           ^~~
+      |                           rhs
+micrograd.cpp: In lambda function:
+micrograd.cpp:58:4: error: 'lhs_weak' was not declared in this scope
+   58 |    lhs_weak.lock()->grad += out_weak.lock()->grad * rhs;
+      |    ^~~~~~~~
+micrograd.cpp:58:29: error: 'out_weak' was not declared in this scope
+   58 |    lhs_weak.lock()->grad += out_weak.lock()->grad * rhs;
+      |                             ^~~~~~~~
+micrograd.cpp:58:53: error: 'rhs' is not captured
+   58 |    lhs_weak.lock()->grad += out_weak.lock()->grad * rhs;
+      |                                                     ^~~
+micrograd.cpp:57:132: note: the lambda has no capture-default
+   57 |   out->backward = [lhs_weak = std::weak_ptr<Value>(lhs), rhs_weak = std::weak_ptr<Value>(rhs), out_weak = std::weak_ptr<Value>(out)](){
+      |                                                                                                                                    ^
+micrograd.cpp:54:65: note: 'const ValuePtr& rhs' declared here
+   54 |  static ValuePtr multiply(const ValuePtr &base, const ValuePtr &rhs){
+      |                                                 ~~~~~~~~~~~~~~~~^~~
+micrograd.cpp:59:53: error: 'lhs' is not captured
+   59 |    rhs_weak.lock()->grad += out_weak.lock()->grad * lhs;
+      |                                                     ^~~
+micrograd.cpp:57:132: note: the lambda has no capture-default
+   57 |   out->backward = [lhs_weak = std::weak_ptr<Value>(lhs), rhs_weak = std::weak_ptr<Value>(rhs), out_weak = std::weak_ptr<Value>(out)](){
+      |                                                                                                                                    ^
+micrograd.cpp:55:27: note: '<typeprefixerror>lhs' declared here
+   55 |   auto out = Value.create(lhs->data * rhs->data, "*");
+      |                           ^~~
+micrograd.cpp: In static member function 'static ValuePtr Value::pow(const ValuePtr&, float)':
+micrograd.cpp:65:19: error: expected primary-expression before '.' token
+   65 |   auto out = Value.create(std::pow(base->data, exponent), "^");
+      |                   ^
+micrograd.cpp:65:32: error: 'pow' is not a member of 'std'
+   65 |   auto out = Value.create(std::pow(base->data, exponent), "^");
+      |                                ^~~
+micrograd.cpp:67:53: error: 'lhs' was not declared in this scope
+   67 |   out->backward = [base_weak = std::weak_ptr<Value>(lhs), out_weak = std::weak_ptr<Value>(out)](){
+      |                                                     ^~~
+micrograd.cpp: In lambda function:
+micrograd.cpp:68:4: error: 'base_weak' was not declared in this scope
+   68 |    base_weak.lock()->grad = out_weak.lock()->grad * exponent * std::pow(base, exponent - 1);
+      |    ^~~~~~~~~
+micrograd.cpp:68:29: error: 'out_weak' was not declared in this scope
+   68 |    base_weak.lock()->grad = out_weak.lock()->grad * exponent * std::pow(base, exponent - 1);
+      |                             ^~~~~~~~
+micrograd.cpp:68:53: error: 'exponent' is not captured
+   68 |    base_weak.lock()->grad = out_weak.lock()->grad * exponent * std::pow(base, exponent - 1);
+      |                                                     ^~~~~~~~
+micrograd.cpp:67:95: note: the lambda has no capture-default
+   67 |   out->backward = [base_weak = std::weak_ptr<Value>(lhs), out_weak = std::weak_ptr<Value>(out)](){
+      |                                                                                               ^
+micrograd.cpp:64:50: note: 'float exponent' declared here
+   64 |  static ValuePtr pow(const ValuePtr &base, float exponent){
+      |                                            ~~~~~~^~~~~~~~
+micrograd.cpp:68:69: error: 'pow' is not a member of 'std'
+   68 |    base_weak.lock()->grad = out_weak.lock()->grad * exponent * std::pow(base, exponent - 1);
+      |                                                                     ^~~
+micrograd.cpp:68:73: error: 'base' is not captured
+   68 |    base_weak.lock()->grad = out_weak.lock()->grad * exponent * std::pow(base, exponent - 1);
+      |                                                                         ^~~~
+micrograd.cpp:67:95: note: the lambda has no capture-default
+   67 |   out->backward = [base_weak = std::weak_ptr<Value>(lhs), out_weak = std::weak_ptr<Value>(out)](){
+      |                                                                                               ^
+micrograd.cpp:64:38: note: 'const ValuePtr& base' declared here
+   64 |  static ValuePtr pow(const ValuePtr &base, float exponent){
+      |                      ~~~~~~~~~~~~~~~~^~~~
+micrograd.cpp:68:79: error: 'exponent' is not captured
+   68 |    base_weak.lock()->grad = out_weak.lock()->grad * exponent * std::pow(base, exponent - 1);
+      |                                                                               ^~~~~~~~
+micrograd.cpp:67:95: note: the lambda has no capture-default
+   67 |   out->backward = [base_weak = std::weak_ptr<Value>(lhs), out_weak = std::weak_ptr<Value>(out)](){
+      |                                                                                               ^
+micrograd.cpp:64:50: note: 'float exponent' declared here
+   64 |  static ValuePtr pow(const ValuePtr &base, float exponent){
+      |                                            ~~~~~~^~~~~~~~
+micrograd.cpp: In member function 'void Value::buildtopo(int, std::unordered_set<Value>, int)':
+micrograd.cpp:80:6: error: 'visited' was not declared in this scope
+   80 |   if(visited.find(v) == visited.end()){
+      |      ^~~~~~~
+micrograd.cpp:82:29: error: base operand of '->' is not a pointer
+   82 |    for(const auto& child : v->prev)
+      |                             ^~
+micrograd.cpp:83:31: error: 'topo' was not declared in this scope; did you mean 'op'?
+   83 |     buildtopo(child, visited, topo);
+      |                               ^~~~
+      |                               op
+micrograd.cpp:84:4: error: 'topo' was not declared in this scope; did you mean 'op'?
+   84 |    topo.push_back(v);
+      |    ^~~~
+      |    op
+micrograd.cpp: In member function 'void Value::backprop()':
+micrograd.cpp:89:28: error: expected unqualified-id before ',' token
+   89 |   std::unordered_set<Value>, Hash> visited;
+      |                            ^
+micrograd.cpp:89:34: error: expected initializer before '>' token
+   89 |   std::unordered_set<Value>, Hash> visited;
+      |                                  ^
+micrograd.cpp:91:33: error: 'visited' was not declared in this scope
+   91 |   buildtopo(shared_from_this(), visited, topo);
+      |                                 ^~~~~~~
+micrograd.cpp:96:20: error: void value not ignored as it ought to be
+   96 |    if(*it->backward())
+      |        ~~~~~~~~~~~~^~
+micrograd.cpp:97:18: error: void value not ignored as it ought to be
+   97 |     *it->backward();
+      |      ~~~~~~~~~~~~^~
+micrograd.cpp:98:14: error: void value not ignored as it ought to be
+   98 |    *it->print();
+      |     ~~~~~~~~~^~
+micrograd.cpp: In function 'int main()':
+micrograd.cpp:112:22: error: cannot convert 'Value' to 'const ValuePtr&' {aka 'const std::shared_ptr<Value>&'}
+  112 |  auto c = Value::add(a, b);
+      |                      ^
+      |                      |
+      |                      Value
+micrograd.cpp:34:38: note:   initializing argument 1 of 'static ValuePtr Value::add(const ValuePtr&, const ValuePtr&)'
+   34 |  static ValuePtr add(const ValuePtr &lhs, const ValuePtr &rhs){
+      |                      ~~~~~~~~~~~~~~~~^~~
