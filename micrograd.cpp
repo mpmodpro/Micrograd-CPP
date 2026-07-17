@@ -180,7 +180,7 @@ class Neuron{
 	
 	public:
 		Neuron(size_t nin, const ActivationType act) : act(act){
-			for(size_t in = 0; in <= nin; in++)
+			for(size_t in = 0; in < nin; in++)
 				weights.emplace_back(Value::create(getRandomFloat()));
 		}
 		
@@ -209,12 +209,12 @@ class Neuron{
 		printf("\n");
 	}
 	
-	ValuePtr operator()(std::vector<ValuePtr>& x){
+	ValuePtr operator()(const std::vector<ValuePtr>& x) const{
 		if(weights.size() != x.size())
 			throw std::invalid_argument("Inputs & Neuron Weights need to be of the same size");
 			
 		ValuePtr sum = Value::create(0.0);
-		for(size_t idx = 0; idx <= weights.size(); ++idx)
+		for(size_t idx = 0; idx < weights.size(); ++idx)
 			sum = Value::add(sum, Value::multiply(weights[idx], x[idx]));
 		
 		sum = Value::add(sum, bias);
@@ -229,14 +229,45 @@ class Layer{
 	public:
 		std::vector<Neuron> neurons;
 		Layer(size_t dimN, size_t noN, const ActivationType& act){
-			for(size_t idx = 0; idx <= noN; ++idx)
+			for(size_t idx = 0; idx < noN; ++idx)
 				this->neurons.emplace_back(Neuron(dimN, act));
 		} 
 		
-		ValuePtr operator()(const std::vector<ValuePtr>& x){
+		std::vector<ValuePtr> operator()(const std::vector<ValuePtr>& x){
 			std::vector<ValuePtr> out;
-			
+			out.reserve(neurons.size());
+			std::for_each(neurons.begin(), neurons.end(), [&out, &x](const auto& neuron){
+				out.emplace_back(neuron(x));
+			});
+
+			return out;
 		}
+		
+		void zeroGrad(){
+			for(auto& neuron : neurons)
+				neuron.zeroGrad();
+		}
+		
+		std::vector<ValuePtr> Parameter() const{
+			std::vector<ValuePtr> params;
+			if (params.empty())
+				for(const auto& neuron : neurons)
+					for(const auto& p : neuron.Parameters())
+						params.push_back(p);
+					
+			return params;
+		}
+		
+		void print(){
+			const auto& params = this->Parameter();
+			printf("No. of Parameters: %zu\n", params.size());
+			for(const auto& p: params){
+				std::cout << &p << " ";
+				printf("%f, %f\n", p->data, p->grad);
+			}
+			printf("\n");	
+		}
+		
 };
 
 int main(){
@@ -250,4 +281,7 @@ int main(){
 	auto loss = Value::add(d,d);
 	
 	loss->backprop();
+	
+	Layer L1(4, 2, ActivationType::RELU);
+	L1.print();
 }
