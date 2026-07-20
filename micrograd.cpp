@@ -270,6 +270,71 @@ class Layer{
 		
 };
 
+class Tensor{
+private:
+	std::vector<std::vector<ValuePtr>> tensor;
+
+public:
+	Tensor(std::initializer_list<float>& input){
+		for(const auto& elem : input){
+			std::vector<ValuePtr> subtensor;
+			subtensor.push_back(Value::create(elem));
+			tensor.push_back(subtensor);
+		}
+	}
+	
+	auto begin(){
+		this->tensor.begin();
+	}
+	
+	auto end(){
+		this->tensor.end();
+	}
+	
+	auto begin() const{
+		this->tensor.begin();
+	}
+	
+	auto end() const{
+		this->tensor.end();
+	}
+	
+	//i th row
+	std::vector<ValuePtr> operator[](const size_t idx) const{
+		if(idx >= tensor.size())
+			throw std::invalid_argument("Index out of bound");
+		
+		return tensor[idx];
+	}
+	
+	//j th row
+	ValuePtr at(const size_t idx, const size_t jdx) const{
+		if(idx >= tensor.size() || jdx >= tensor[idx].size())
+			throw std::invalid_argument("Index out of bound");
+		
+		return tensor[idx][jdx];
+	}
+	
+	auto reset(){
+		tensor.clear();
+	}
+	
+	auto push_back(const std::vector<ValuePtr> elems){
+		std::vector<ValuePtr> subtensor;
+		std::copy(elems.begin(), elems.end(), std::back_inserter(subtensor));
+	}
+	
+	size_t size() const{
+		return tensor.size();
+	}
+	
+	void zeroGrad(){
+		for(auto& subtensor : tensor)
+			for(auto& value: subtensor)
+				value->grad = 0;
+	}
+};
+
 int main(){
 	auto a = Value::create(1.0, "");
 	auto b = Value::create(2.0, "");
