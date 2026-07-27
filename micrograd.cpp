@@ -5,6 +5,7 @@
 #include <unordered_set>
 #include <cmath>
 #include <random>
+#include <chrono>
 
 
 class Value;
@@ -35,7 +36,7 @@ class Value: public std::enable_shared_from_this<Value>{
 		}
 		
 		~Value(){
-			Value::currentID--;
+			//Value::currentID--;
 		}
 		
 	static ValuePtr add(const ValuePtr &lhs, const ValuePtr &rhs){
@@ -127,7 +128,7 @@ class Value: public std::enable_shared_from_this<Value>{
 		for(auto it = topo.rbegin(); it != topo.rend(); it++){
 			if((*it)->backward)
 				(*it)->backward();
-			(*it)->print();
+			//(*it)->print();
 		}
 	}
 	
@@ -258,7 +259,7 @@ class Layer{
 			return params;
 		}
 		
-		void print(){
+		void printParameters(){
 			const auto& params = this->Parameter();
 			printf("No. of Parameters: %zu\n", params.size());
 			for(const auto& p: params){
@@ -275,7 +276,7 @@ private:
 	std::vector<std::vector<ValuePtr>> tensor;
 
 public:
-	Tensor(std::initializer_list<float>& input){
+	Tensor(std::initializer_list<float> input){
 		for(const auto& elem : input){
 			std::vector<ValuePtr> subtensor;
 			subtensor.push_back(Value::create(elem));
@@ -284,19 +285,19 @@ public:
 	}
 	
 	auto begin(){
-		this->tensor.begin();
+		return tensor.begin();
 	}
 	
 	auto end(){
-		this->tensor.end();
+		return tensor.end();
 	}
 	
 	auto begin() const{
-		this->tensor.begin();
+		return tensor.begin();
 	}
 	
 	auto end() const{
-		this->tensor.end();
+		return tensor.end();
 	}
 	
 	//i th row
@@ -322,6 +323,7 @@ public:
 	auto push_back(const std::vector<ValuePtr> elems){
 		std::vector<ValuePtr> subtensor;
 		std::copy(elems.begin(), elems.end(), std::back_inserter(subtensor));
+		this->tensor.emplace_back(subtensor);
 	}
 	
 	size_t size() const{
@@ -335,18 +337,110 @@ public:
 	}
 };
 
+
+class MLP{
+private:
+	std::vector<size_t> sizes;
+	std::vector<Layer> layers;
+	float learning_rate;
+	
+public:	
+	MLP(size_t nin, std::vector<size_t> nouts, const float learning_rate) : learning_rate(learning_rate){
+		sizes.reserve(4);
+		sizes.push_back(nin);
+		std::copy(nouts.begin(), nouts.end(), std::back_inserter(sizes));
+		
+		for(size_t idx = 0; idx < sizes.size() - 1; ++idx){
+			layers.emplace_back(sizes[idx], sizes[idx+1], ActivationType::SIGMOID);
+		}
+	}
+	
+	std::vector<ValuePtr> Parameter() const{
+		std::vector<ValuePtr> params;
+		if (params.empty())
+			for(const auto& layer : this->layers)
+				for(const auto& p : layer.Parameter())
+					params.push_back(p);
+					
+		return params;
+	}
+	
+	void printParameters(){
+			const auto& params = this->Parameter();
+			printf("No. of Parameters: %zu\n", params.size());
+			for(const auto& p: params){
+				std::cout << &p << " ";
+				printf("%f, %f\n", p->data, p->grad);
+			}
+			printf("\n");	
+		}
+		
+	void zeroGrad(){
+			for(auto& layer : this->layers)
+				layer.zeroGrad();
+		}
+	
+	void update(){
+		for(auto& p : this->Parameter())
+			p->data += ((-learning_rate) * p->grad);
+	}
+	
+	std::vector<ValuePtr> operator()(const std::vector<ValuePtr>& input){
+		std::vector<ValuePtr> x = input;
+		
+		for(auto& layer : layers){
+			std::vector<ValuePtr> y = layer(x);
+			x = y;
+		}
+		
+		return x;
+	}
+	
+};
+
+
 int main(){
-	auto a = Value::create(1.0, "");
-	auto b = Value::create(2.0, "");
+	Tensor input({0.266667, 0.266667, 0.294118, 0.301961, 0.333333, 0.152941, 0.215686, 0.290196, 0.282353, 0.298039, 0.313726, 0.309804, 0.317647, 0.34902, 0.32549, 0.266667, 0.266667, 0.294118, 0.301961, 0.333333, 0.152941, 0.215686, 0.290196, 0.282353, 0.298039, 0.313726, 0.309804, 0.317647, 0.34902, 0.32549, 0.333333, 0.333333, 0.529412, 0.666275, 0});
+
+	Tensor output({0.266667, 0.266667, 0.294118, 0.301961, 0.333333, 0.152941, 0.215686, 0.290196, 0.282353, 0.298039, 0.313726, 0.309804, 0.317647, 0.34902, 0.32549, 0.266667, 0.266667, 0.294118, 0.301961, 0.333333, 0.152941, 0.215686, 0.290196, 0.282353, 0.298039, 0.313726, 0.309804, 0.317647, 0.34902, 0.32549, 0.333333, 0.333333, 0.529412, 0.666275, 0});
 	
-	auto c = Value::add(a, b);
 	
-	auto d = Value::multiply(c, c);
+	const float LearningRate = 0.05;
 	
-	auto loss = Value::add(d,d);
+	size_t nwSize = input[0].size();
 	
-	loss->backprop();
+	auto mlp = std::unique_ptr<MLP>(new MLP(nwSize ,{1, 1, nwSize} , LearningRate));
 	
-	Layer L1(4, 2, ActivationType::RELU);
-	L1.print();
-}
+	auto start_time_point = std::chrono::high_resolution_clock::now();
+	
+	Tensor ypred({});
+	
+	for(size_t idx = 0; idx < 1000000; ++idx){
+		std::cout << "//////////////////////////////////////////////////////////////////////////" << std::endl;
+		
+		input.zeroGrad();
+		
+		auto loss = Value::create(0.0f);			
+		for(const auto& inp : input)
+			ypred.push_back((*mlp)(inp));
+			
+		//Loss
+		
+		for(size_t idx = 0; idx < output[0].size(); ++idx){
+			auto c = Value::substract(output.at(0, idx), ypred.at(0, idx));
+			auto d = Value::multiply(c, c);
+			
+			loss = Value::add(loss, d);
+			}		
+		
+		mlp->zeroGrad();
+		
+		loss->backprop();
+		
+		mlp->update();
+		
+		std::cout << "Iteration: " << idx << " " << "Loss: " << loss->data << " , " << Value::currentID << std::endl;
+		
+		ypred.reset();
+		}
+	}	
