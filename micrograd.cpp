@@ -26,6 +26,7 @@ class Value: public std::enable_shared_from_this<Value>{
 		size_t id;
 		std::vector<ValuePtr> prev;
 		std::function<void()> backward;
+		float velocity = 0.0f;
 		
 		
 	private:
@@ -380,9 +381,16 @@ public:
 				layer.zeroGrad();
 		}
 	
-	void update(){
+	void gradientDescent(){
 		for(auto& p : this->Parameter())
 			p->data += ((-learning_rate) * p->grad);
+	}
+	
+	void gradientDescentwithMomentum(float Beta){
+		for(auto& p : this->Parameter()){
+			p->velocity = (Beta * p->velocity) + (learning_rate * p->grad);
+			p->data = p->data - p->velocity;
+ 		}
 	}
 	
 	std::vector<ValuePtr> operator()(const std::vector<ValuePtr>& input){
@@ -405,11 +413,13 @@ int main(){
 	Tensor output({0.266667, 0.266667, 0.294118, 0.301961, 0.333333, 0.152941, 0.215686, 0.290196, 0.282353, 0.298039, 0.313726, 0.309804, 0.317647, 0.34902, 0.32549, 0.266667, 0.266667, 0.294118, 0.301961, 0.333333, 0.152941, 0.215686, 0.290196, 0.282353, 0.298039, 0.313726, 0.309804, 0.317647, 0.34902, 0.32549, 0.333333, 0.333333, 0.529412, 0.666275, 0});
 	
 	
-	const float LearningRate = 0.05;
+	const float LearningRate = 0.01;
 	
 	size_t nwSize = input[0].size();
 	
-	auto mlp = std::unique_ptr<MLP>(new MLP(nwSize ,{1, 1, nwSize} , LearningRate));
+	std::cout << "Input n/w size: " << nwSize << std::endl;
+	
+	auto mlp = std::unique_ptr<MLP>(new MLP(nwSize ,{32, 32, 32, nwSize} , LearningRate));
 	
 	auto start_time_point = std::chrono::high_resolution_clock::now();
 	
@@ -437,7 +447,7 @@ int main(){
 		
 		loss->backprop();
 		
-		mlp->update();
+		mlp->gradientDescentwithMomentum(0.9);
 		
 		std::cout << "Iteration: " << idx << " " << "Loss: " << loss->data << " , " << Value::currentID << std::endl;
 		
