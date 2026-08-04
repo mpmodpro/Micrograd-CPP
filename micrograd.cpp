@@ -8,7 +8,7 @@
 #include <chrono>
 
 
-class Value;
+class Value; 
 
 using ValuePtr = std::shared_ptr<Value>;
 
@@ -393,6 +393,25 @@ public:
  		}
 	}
 	
+	void beginNAG(float Beta){
+		for(auto& p : this->Parameter()){
+			p->data -= (Beta * p->velocity);
+		}
+	}
+	
+	void endNAG(float Beta){
+		for(auto& p : this->Parameter()){
+			p->data += (Beta * p->velocity);
+		}
+	}
+	
+	void NAG(float Beta){
+		for(auto& p : this->Parameter()){
+			p->velocity = (Beta * p->velocity) + (learning_rate * p->grad);
+			p->data = p->data - p->velocity;
+		}
+	}
+	
 	std::vector<ValuePtr> operator()(const std::vector<ValuePtr>& input){
 		std::vector<ValuePtr> x = input;
 		
@@ -419,7 +438,7 @@ int main(){
 	
 	std::cout << "Input n/w size: " << nwSize << std::endl;
 	
-	auto mlp = std::unique_ptr<MLP>(new MLP(nwSize ,{32, 32, 32, nwSize} , LearningRate));
+	auto mlp = std::unique_ptr<MLP>(new MLP(nwSize ,{16, 16, nwSize} , LearningRate));
 	
 	auto start_time_point = std::chrono::high_resolution_clock::now();
 	
@@ -430,7 +449,12 @@ int main(){
 		
 		input.zeroGrad();
 		
-		auto loss = Value::create(0.0f);			
+		auto loss = Value::create(0.0f);
+		
+		mlp->zeroGrad();
+		
+		mlp->beginNAG(0.9);
+		
 		for(const auto& inp : input)
 			ypred.push_back((*mlp)(inp));
 			
@@ -441,16 +465,16 @@ int main(){
 			auto d = Value::multiply(c, c);
 			
 			loss = Value::add(loss, d);
-			}		
-		
-		mlp->zeroGrad();
+		}		
 		
 		loss->backprop();
 		
-		mlp->gradientDescentwithMomentum(0.9);
+		mlp->endNAG(0.9);
+		
+		mlp->NAG(0.9);
 		
 		std::cout << "Iteration: " << idx << " " << "Loss: " << loss->data << " , " << Value::currentID << std::endl;
 		
 		ypred.reset();
-		}
-	}	
+	}
+}
