@@ -27,7 +27,8 @@ class Value: public std::enable_shared_from_this<Value>{
 		std::vector<ValuePtr> prev;
 		std::function<void()> backward;
 		float velocity = 0.0f;
-		
+		float r = 0.0f;
+		float m = 0.0f;
 		
 	private:
 		Value(float data, const std::string &op, size_t id) : data(data) , op(op), id(id) {};	
@@ -344,6 +345,7 @@ private:
 	std::vector<size_t> sizes;
 	std::vector<Layer> layers;
 	float learning_rate;
+	size_t t = 0;
 	
 public:	
 	MLP(size_t nin, std::vector<size_t> nouts, const float learning_rate) : learning_rate(learning_rate){
@@ -386,30 +388,60 @@ public:
 			p->data += ((-learning_rate) * p->grad);
 	}
 	
-	void gradientDescentwithMomentum(float Beta){
+	void gradientDescentwithMomentum(const float Beta){
 		for(auto& p : this->Parameter()){
 			p->velocity = (Beta * p->velocity) + (learning_rate * p->grad);
 			p->data = p->data - p->velocity;
  		}
 	}
 	
-	void beginNAG(float Beta){
+	void beginNAG(const float Beta){
 		for(auto& p : this->Parameter()){
 			p->data -= (Beta * p->velocity);
 		}
 	}
 	
-	void endNAG(float Beta){
+	void endNAG(const float Beta){
 		for(auto& p : this->Parameter()){
 			p->data += (Beta * p->velocity);
 		}
 	}
 	
-	void NAG(float Beta){
+	void NAG(const float Beta){
 		for(auto& p : this->Parameter()){
 			p->velocity = (Beta * p->velocity) + (learning_rate * p->grad);
 			p->data = p->data - p->velocity;
 		}
+	}
+	
+	void Adagrad(){
+		const float e = 1e-8f;
+		for(auto& p : this->Parameter()){
+			p->r = p->r + (p->grad * p->grad);
+			p->data += ((-learning_rate/(std::sqrt(p->r) + e)) * p->grad);
+		}
+	}
+	
+	void RMSprop(){
+		const float e = 1e-8f;
+		const float beta = 0.95;
+		for(auto& p : this->Parameter()){
+			p->r = (beta * p->r) + ((1 - beta) * (p->grad * p->grad));
+			p->data += ((-learning_rate/(std::sqrt(p->r) + e)) * p->grad);
+		}
+	}
+	
+	void Adam(const float Beta1 = 0.9, const float Beta2 = 0.999){
+		const float e = 1e-8f;
+		++t;
+		for(auto& p : this->Parameter()){
+			p->m = (Beta1 * p->m) + ((1 - Beta1) * (p->grad));
+			p->r = (Beta2 * p->r) + ((1 - Beta2) * (p->grad * p->grad));
+			float m_bc = p->m / (1 - std::pow(Beta1, t));
+			float r_bc = p->r / (1 - std::pow(Beta2, t));
+			p->data += ((-learning_rate * m_bc)/(std::sqrt(r_bc) + e));
+		}
+		
 	}
 	
 	std::vector<ValuePtr> operator()(const std::vector<ValuePtr>& input){
@@ -451,10 +483,6 @@ int main(){
 		
 		auto loss = Value::create(0.0f);
 		
-		mlp->zeroGrad();
-		
-		mlp->beginNAG(0.9);
-		
 		for(const auto& inp : input)
 			ypred.push_back((*mlp)(inp));
 			
@@ -465,13 +493,13 @@ int main(){
 			auto d = Value::multiply(c, c);
 			
 			loss = Value::add(loss, d);
-		}		
+		}
+		
+		mlp->zeroGrad();
 		
 		loss->backprop();
 		
-		mlp->endNAG(0.9);
-		
-		mlp->NAG(0.9);
+		mlp->Adam(0.9);
 		
 		std::cout << "Iteration: " << idx << " " << "Loss: " << loss->data << " , " << Value::currentID << std::endl;
 		
