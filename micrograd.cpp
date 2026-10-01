@@ -6,9 +6,11 @@
 #include <cmath>
 #include <random>
 #include <chrono>
+#include <iterator>
+#include <sstream>
 
 
-class Value; 
+class Value;
 
 using ValuePtr = std::shared_ptr<Value>;
 
@@ -21,7 +23,7 @@ class Value: public std::enable_shared_from_this<Value>{
 	public:
 		inline static size_t currentID;
 		float data;
-		float grad;
+		float grad = 0.0f;
 		std::string op;
 		size_t id;
 		std::vector<ValuePtr> prev;
@@ -140,7 +142,7 @@ class Value: public std::enable_shared_from_this<Value>{
 };
 
 size_t Hash::operator()(const ValuePtr value) const{
-	return std::hash<std::string>()(value->op) ^ std::hash<float>()(value->data);
+	return std::hash<std::string>()(value->op) ^ std::hash<float>()(value->id);
 }
 
 
@@ -173,52 +175,324 @@ float getRandomFloat(){
 }
 
 
+static std::vector<ValuePtr> randomWeights(size_t nin){
+	std::vector<ValuePtr> rnd;
+	for(size_t in = 0; in < nin; in++)
+		rnd.emplace_back(Value::create(getRandomFloat()));
+	return rnd;
+}
 
+class Tensor{
+	private:
+		std::vector<ValuePtr> tensor;
+		std::vector<size_t> shape;
+		std::vector<size_t> stride;
+		size_t ne = 0;
+		
+	public:
+		Tensor(std::vector<ValuePtr> data, std::vector<size_t> shape) : shape(shape){
+			if(shape.empty())
+				throw std::invalid_argument("Shape cannot be empty");
+			
+			ne = 1;
+			for(auto& s : shape){
+				if(s == 0)
+					throw std::invalid_argument("A dimension can not be 0");
+				ne *= s;
+			}
+				
+			if (data.size() != ne)
+				throw std::invalid_argument("Either excess or deficient elements in the tensor");
+			
+			tensor = data;
+			
+			stride.resize(shape.size());
+			
+			stride[shape.size() - 1] = 1;
+			
+			if(shape.size() > 1)
+				for(size_t idx = shape.size() - 1; idx > 0; idx--)
+					stride[idx - 1] = stride[idx] * shape[idx];
+		}
+		
+		ValuePtr& at(std::vector<size_t> pos){
+			size_t offset = 0;
+			if(pos.size() != shape.size())
+				throw std::invalid_argument("Cannot access non-existent dimensions");
+			
+			for(size_t idx = 0; idx < pos.size(); ++idx){
+				if(pos[idx] >= shape[idx])
+					throw std::out_of_range("Index " + std::to_string(idx) + " is out of range");
+				
+				offset += pos[idx] * stride[idx];
+			}
+			
+			return tensor[offset];
+		}
+		
+		const ValuePtr& at(std::vector<size_t> pos) const{
+			size_t offset = 0;
+			if(pos.size() != shape.size())
+				throw std::invalid_argument("Cannot access non-existent dimensions");
+			
+			for(size_t idx = 0; idx < pos.size(); ++idx){
+				if(pos[idx] >= shape[idx])
+					throw std::out_of_range("Index " + std::to_string(idx) + " is out of range");
+				
+				offset += pos[idx] * stride[idx];
+			}
+			
+			return tensor[offset];
+		}
+		
+		Tensor getSample(size_t sampleIndex) const{
+			if(sampleIndex >= shape[0])
+        		throw std::invalid_argument("Cannot access elements outside the sample");
+
+			size_t slice = stride[0];
+	
+			std::vector<ValuePtr> data;
+   		data.reserve(slice);
+
+			size_t offset = sampleIndex * slice;
+	
+			for(size_t idx = 0; idx < slice; ++idx)
+				data.push_back(tensor[offset + idx]);
+	
+			std::vector<size_t> sample_shape(shape.begin() + 1, shape.end());
+	
+			return Tensor(data, sample_shape);
+		}
+		
+		Tensor slice(std::vector<size_t> sliceIndex) const{
+			if(sliceIndex.empty())
+				throw std::invalid_argument("The slice input cannot be empty");
+			
+			if(sliceIndex.size() >= shape.size())
+				throw std::invalid_argument("Too many indices");
+			
+			for(size_t idx = 0; idx < sliceIndex.size(); ++idx)
+				if(sliceIndex[idx] >= shape[idx])
+					throw std::out_of_range("Cannot access elements outside the sample");
+					
+			size_t offset = 0;
+			
+			for(size_t idx = 0; idx < sliceIndex.size(); ++idx)
+				offset += stride[idx] * sliceIndex[idx];
+			
+			size_t slice = stride[sliceIndex.size() - 1];
+			
+			std::vector<ValuePtr> data;
+   		data.reserve(slice);
+			
+			for(size_t idx = 0; idx < slice; ++idx)
+				data.push_back(tensor[offset + idx]);
+			
+			std::vector<size_t> sample_shape(shape.begin() + sliceIndex.size(), shape.end());
+	
+			return Tensor(data, sample_shape);
+			
+		}
+		
+		Tensor reshape(std::vector<size_t> newShape){
+			if(newShape.empty())
+			    throw std::invalid_argument("Shape cannot be empty");
+			
+			size_t numel = 1;
+			for(size_t s : newShape){
+				if(s == 0)
+					throw std::invalid_argument("A dimension can not be 0");
+				numel *= s;
+			}
+			
+			if(ne != numel)
+				throw std::invalid_argument("The new shape is invalid");
+			
+			return Tensor(tensor, newShape);
+		}
+		
+		
+		const std::vector<ValuePtr>& data() const{
+			return tensor;
+		}
+		
+		const std::vector<size_t>& getShape() const{
+			return shape;
+		}
+		
+		const std::vector<size_t>& getStride() const{
+			return stride;
+		}
+		
+		size_t numel() const{
+			return ne;
+		}
+		
+		size_t ndim() const{
+			return shape.size();
+		}
+		
+		static std::vector<size_t> broadcastShape(std::vector<size_t> a, std::vector<size_t> b){
+			size_t maxSize = std::max(a.size(), b.size());
+			
+			std::vector<size_t> brdcstShape(maxSize);
+			
+			for(size_t i = 0; i < maxSize; ++i){
+				size_t x = (i < a.size()) ? a[a.size() - i - 1] : 1;
+				size_t y = (i < b.size()) ? b[b.size() - i - 1] : 1;
+				
+				if(x == y || ((x == 1) || (y == 1)))
+					brdcstShape[brdcstShape.size() - i - 1] = std::max(x, y);
+				else
+					throw std::invalid_argument("Broadcasting shapes are incompatible");
+			}
+			return brdcstShape;
+		}
+		
+		std::vector<size_t> broadcastIndexMap(std::vector<size_t> ip) const{
+			//std::cout << "\nOutput tensor size: " << getShape().size() << "\nInput Tensor size" << ip.size() << std::endl;
+			if(getShape().size() > ip.size())
+				//std::cout << "Mapping Tensor\n Shape: " << ip.getShape() << "Index">>
+				throw std::invalid_argument("Broadcast index mapping cannot continue due to output tensor size being greater than it's broadcast tensor size");
+			size_t ds = ip.size() - getShape().size();
+			std::vector<size_t> op(getShape().size());
+			for(size_t idx = 0; idx < ip.size(); ++idx){
+				if(idx < ds)
+					continue;
+				
+				op[idx - ds] = (getShape()[idx - ds] == 1) ? 0 : ip[idx];
+			}
+			return op;
+		}
+		
+		Tensor broadcastAdd(Tensor other) const{
+			std::vector<size_t> shape = broadcastShape(getShape(), other.getShape());
+			
+			size_t numel = 1;
+			for(size_t s : shape)
+				numel *= s;
+			
+			std::vector<ValuePtr> out;
+			out.reserve(numel);
+			
+			std::vector<size_t> index(shape.size());
+			for(size_t i = 0; i < numel; i++){
+				size_t temp = i;
+				for(size_t j = shape.size(); j-- > 0;){
+					index[j] = temp % shape[j];
+					temp = temp / shape[j];
+				}
+				ValuePtr lhs = at(broadcastIndexMap(index));
+				ValuePtr rhs = other.at(other.broadcastIndexMap(index));
+				out.push_back(Value::add(lhs, rhs));
+			}
+			
+			return Tensor(out, shape);
+		}
+		
+		Tensor broadcastAddExp(Tensor other) const{
+			return flat_elementwise_operation(Value::add, *this, other);
+		}
+		
+		static size_t numel(std::vector<size_t> shape){
+			size_t numel = 1;
+			for(size_t s : shape)
+				numel *= s;
+			return numel;
+		}
+		
+		static std::vector<size_t> flat_to_multidimension(size_t& i, std::vector<size_t>& shape, std::vector<size_t> out_index){
+			size_t temp = i;
+			for(size_t j = shape.size(); j-- > 0;){
+				out_index[j] = temp % shape[j];
+				temp = temp / shape[j];
+			}
+			return out_index;
+		}
+		
+		template<typename op>
+		static Tensor flat_elementwise_operation(op func, const Tensor& lhs, const Tensor& rhs){
+			std::vector<ValuePtr> out;
+			std::vector<size_t> shape;
+			
+			if(lhs.getShape() == rhs.getShape()){
+				shape = lhs.getShape();
+				out.reserve(numel(shape));
+				for(size_t i = 0; i < numel(shape); i++)
+					out.push_back(func(lhs.data()[i], rhs.data()[i]));
+				return Tensor(out, shape);
+			}
+					
+			shape = broadcastShape(lhs.getShape(), rhs.getShape());
+			out.reserve(numel(shape));
+			std::vector<size_t> index(shape.size());
+			for(size_t i = 0; i < numel(shape); i++){
+				index = flat_to_multidimension(i, shape, index);
+				ValuePtr ls = lhs.at(lhs.broadcastIndexMap(index));
+				ValuePtr rs = rhs.at(rhs.broadcastIndexMap(index));
+				out.push_back(func(ls, rs));
+			}
+			return Tensor(out, shape);
+		}
+		
+		friend Tensor operator+(const Tensor& lhs, const Tensor& rhs){
+			return flat_elementwise_operation(Value::add, lhs, rhs);
+		}
+		
+		friend Tensor operator-(const Tensor& lhs, const Tensor& rhs){
+			return flat_elementwise_operation(Value::substract, lhs, rhs);
+		}
+		
+		friend Tensor operator*(const Tensor& lhs, const Tensor& rhs){
+			return flat_elementwise_operation(Value::multiply, lhs, rhs);
+		}
+		
+		friend Tensor operator/(const Tensor& lhs, const Tensor& rhs){
+			return flat_elementwise_operation(Value::divide, lhs, rhs);
+		}
+};
 
 class Neuron{
 	private:
-		std::vector<ValuePtr> weights;
+		Tensor weights;
 		ValuePtr bias = Value::create(0.0, "");
 		const ActivationType act;
 	
 	public:
-		Neuron(size_t nin, const ActivationType act) : act(act){
-			for(size_t in = 0; in < nin; in++)
-				weights.emplace_back(Value::create(getRandomFloat()));
-		}
-		
+		Neuron(size_t nin, const ActivationType act) : weights(randomWeights(nin), {nin}), act(act){}
 	
 	
 	void zeroGrad(){
-		for(auto weight : weights)
+		for(const auto& weight : weights.data())
 			weight->grad = 0;
 		bias->grad = 0;
 	}
 	
 	 std::vector<ValuePtr> Parameters() const{
 		std::vector<ValuePtr> out;
-		out.reserve(weights.size() + 1);
-		out.insert(out.end(), weights.begin(), weights.end());
+		out.reserve(weights.numel() + 1);
+		const auto& weightData = weights.data();
+		out.insert(out.end(), weightData.begin(), weightData.end());
 		out.push_back(bias);
 		
 		return out;
 	}
 	
 	void printParameters() const{
-		printf("No. of Parameters: %zu\n", weights.size()+1);
-		for(const auto& params: weights)
+		printf("No. of Parameters: %zu\n", weights.numel());
+		for(const auto& params: weights.data())
 			printf("%f, %f\n", params->data, params->grad);
 		printf("%f, %f\n", bias->data, bias->grad);
 		printf("\n");
 	}
 	
-	ValuePtr operator()(const std::vector<ValuePtr>& x) const{
-		if(weights.size() != x.size())
+	ValuePtr operator()(const Tensor& x) const{
+		if(weights.numel() != x.numel())
 			throw std::invalid_argument("Inputs & Neuron Weights need to be of the same size");
 			
 		ValuePtr sum = Value::create(0.0);
-		for(size_t idx = 0; idx < weights.size(); ++idx)
-			sum = Value::add(sum, Value::multiply(weights[idx], x[idx]));
+		for(size_t idx = 0; idx < weights.numel(); ++idx)
+			sum = Value::add(sum, Value::multiply(weights.at({idx}), x.at({idx})));
 		
 		sum = Value::add(sum, bias);
 		
@@ -228,22 +502,46 @@ class Neuron{
 	}
 };
 
+
+
 class Layer{
 	public:
 		std::vector<Neuron> neurons;
-		Layer(size_t dimN, size_t noN, const ActivationType& act){
-			for(size_t idx = 0; idx < noN; ++idx)
-				this->neurons.emplace_back(Neuron(dimN, act));
+		size_t nin;
+		size_t nout;
+		Layer(size_t nin, size_t nout, const ActivationType& act) : nin(nin), nout(nout){
+			neurons.reserve(nout);
+			for(size_t idx = 0; idx < nout; ++idx)
+				this->neurons.emplace_back(nin, act);
 		} 
 		
-		std::vector<ValuePtr> operator()(const std::vector<ValuePtr>& x){
-			std::vector<ValuePtr> out;
-			out.reserve(neurons.size());
-			std::for_each(neurons.begin(), neurons.end(), [&out, &x](const auto& neuron){
-				out.emplace_back(neuron(x));
-			});
+		Tensor operator()(const Tensor& x){
+			if((x.ndim() == 1) && (x.numel() == nin)){
+				std::vector<ValuePtr> out;
+				out.reserve(neurons.size());
+				for(const auto& neuron : neurons)
+					out.emplace_back(neuron(x));
 
-			return out;
+				return Tensor(out, {nout});
+			}
+			
+			if((x.ndim() == 2) && (x.getShape()[1] == nin)){
+				std::vector<ValuePtr> out;
+				
+				size_t batches = x.getShape()[0];
+				
+				out.reserve(batches * nout);
+				
+				for(size_t i = 0; i < batches; ++i){
+					auto sample = x.slice({i});
+					for(const auto& neuron : neurons)
+						out.emplace_back(neuron(sample));
+				}
+				
+				return Tensor(out, {batches, nout});
+			}
+			
+			throw std::invalid_argument("Incompatible Input Given");
 		}
 		
 		void zeroGrad(){
@@ -253,10 +551,10 @@ class Layer{
 		
 		std::vector<ValuePtr> Parameter() const{
 			std::vector<ValuePtr> params;
-			if (params.empty())
-				for(const auto& neuron : neurons)
-					for(const auto& p : neuron.Parameters())
-						params.push_back(p);
+			params.reserve(nout * (nin + 1));
+			for(const auto& neuron : neurons)
+				for(const auto& p : neuron.Parameters())
+					params.push_back(p);
 					
 			return params;
 		}
@@ -273,6 +571,7 @@ class Layer{
 		
 };
 
+/*
 class Tensor{
 private:
 	std::vector<std::vector<ValuePtr>> tensor;
@@ -338,7 +637,7 @@ public:
 				value->grad = 0;
 	}
 };
-
+*/
 
 class MLP{
 private:
@@ -349,7 +648,7 @@ private:
 	
 public:	
 	MLP(size_t nin, std::vector<size_t> nouts, const float learning_rate) : learning_rate(learning_rate){
-		sizes.reserve(4);
+		sizes.reserve(nouts.size() + 1);
 		sizes.push_back(nin);
 		std::copy(nouts.begin(), nouts.end(), std::back_inserter(sizes));
 		
@@ -444,11 +743,11 @@ public:
 		
 	}
 	
-	std::vector<ValuePtr> operator()(const std::vector<ValuePtr>& input){
-		std::vector<ValuePtr> x = input;
+	Tensor operator()(const Tensor& input){
+		Tensor x = input;
 		
 		for(auto& layer : layers){
-			std::vector<ValuePtr> y = layer(x);
+			Tensor y = layer(x);
 			x = y;
 		}
 		
@@ -457,7 +756,7 @@ public:
 	
 };
 
-
+/*
 int main(){
 	Tensor input({0.266667, 0.266667, 0.294118, 0.301961, 0.333333, 0.152941, 0.215686, 0.290196, 0.282353, 0.298039, 0.313726, 0.309804, 0.317647, 0.34902, 0.32549, 0.266667, 0.266667, 0.294118, 0.301961, 0.333333, 0.152941, 0.215686, 0.290196, 0.282353, 0.298039, 0.313726, 0.309804, 0.317647, 0.34902, 0.32549, 0.333333, 0.333333, 0.529412, 0.666275, 0});
 
@@ -506,3 +805,263 @@ int main(){
 		ypred.reset();
 	}
 }
+*/
+
+
+
+Tensor getSample(const Tensor& x, size_t sampleIndex) {
+    if(sampleIndex >= x.getShape()[0])
+        throw std::invalid_argument("Cannot access elements outside the sample");
+
+    size_t features = x.getShape()[1];
+
+    std::vector<ValuePtr> data;
+    data.reserve(features);
+
+    for(size_t idx = 0; idx < features; ++idx)
+        data.push_back(x.at({sampleIndex, idx}));
+
+    return Tensor(data, {features});
+}
+
+template<typename T>
+std::string printVector(const std::vector<T>& vec){
+	std::ostringstream oss;
+	oss << "[";
+	for(size_t idx = 0; idx < vec.size(); ++idx){
+		oss << vec[idx] << (idx == vec.size() - 1 ? "" : ", ");
+	}
+	oss << "]";
+	return oss.str();
+}
+
+template<typename T>
+std::string printVectorData(const std::vector<T>& vec){
+	std::ostringstream oss;
+	oss << "[";
+	for(size_t idx = 0; idx < vec.size(); ++idx){
+		oss << vec[idx]->data << (idx == vec.size() - 1 ? "" : ", ");
+	}
+	oss << "]";
+	return oss.str();
+}
+
+
+
+/*
+int main(){
+	std::vector<ValuePtr> data;
+
+	for(float i = 1; i <= 24; ++i)
+   	data.push_back(Value::create(i));
+
+	Tensor x(data, {2, 3, 4});	
+	
+	Tensor y = x.reshape({6, 4});
+	
+	std::cout << "Original:\n";
+	
+	std::cout << "Shape: " << printVector(x.getShape())<< std::endl;
+	
+	std::cout << "Stride: " << printVector(x.getStride())<< std::endl;
+
+	for(const auto& v : x.data())
+   	std::cout << v->data << " ";
+
+	std::cout << "\nReshaped:\n";
+	
+	std::cout << "Shape: " << printVector(y.getShape())<< std::endl;
+	
+	std::cout << "Stride: " << printVector(y.getStride())<< std::endl;
+
+	for(const auto& v : y.data())
+   	std::cout << v->data << " ";
+
+	std::cout << "\n\nElement in reshaped tensor at position (5, 3) is: " << (y.at({5, 3})->data) << std::endl;
+	
+	Tensor x1 = x.slice({0});
+	Tensor x2 = x.slice({1});
+	Tensor x3 = x.slice({1, 2});
+	
+	std::cout << "Slice Test" << std::endl;
+	
+	for(const auto& v : x1.data())
+   	std::cout << v->data << " ";
+	std::cout << "Shape: " << printVector(x1.getShape())<< std::endl;
+	std::cout << "Stride: " << printVector(x1.getStride())<< std::endl;
+	for(const auto& v : x2.data())
+   	std::cout << v->data << " ";
+	std::cout << "Shape: " << printVector(x2.getShape())<< std::endl;
+	std::cout << "Stride: " << printVector(x2.getStride())<< std::endl;
+	for(const auto& v : x3.data())
+   	std::cout << v->data << " ";
+	std::cout << "Shape: " << printVector(x3.getShape())<< std::endl;
+	std::cout << "Stride: " << printVector(x3.getStride())<< std::endl;
+}
+*/
+/*
+int main(){
+	std::vector<ValuePtr> data;
+
+	for(float i = 1; i <= 12; ++i)
+   	data.push_back(Value::create(i));
+
+	// 3 samples, each with 4 features
+	Tensor batch(data, {3, 4});
+
+	Layer layer(4, 2, ActivationType::SIGMOID);
+
+	// Batched forward pass
+	Tensor batchOutput = layer(batch);
+
+	// Individual forward passes
+	Tensor sample0 = batch.slice({0});
+	Tensor sample1 = batch.slice({1});
+	Tensor sample2 = batch.slice({2});
+
+	Tensor output0 = layer(sample0);
+	Tensor output1 = layer(sample1);
+	Tensor output2 = layer(sample2);
+
+	std::cout << "Batched output:\n";
+
+	for(const auto& v : batchOutput.data())
+   	std::cout << v->data << " ";
+
+	std::cout << "\n\nIndividual outputs:\n";
+
+	for(const auto& v : output0.data())
+   	std::cout << v->data << " ";
+
+	std::cout << "\n";
+
+	for(const auto& v : output1.data())
+   std::cout << v->data << " ";
+
+	std::cout << "\n";
+
+	for(const auto& v : output2.data())
+   	std::cout << v->data << " ";
+
+	std::cout << "\n";
+}
+*/
+
+int main(){
+	std::vector<ValuePtr> indata;
+	
+	indata.push_back(Value::create(0.0f));
+	indata.push_back(Value::create(0.0f));
+	
+	indata.push_back(Value::create(0.0f));
+	indata.push_back(Value::create(1.0f));
+	
+	indata.push_back(Value::create(1.0f));
+	indata.push_back(Value::create(0.0f));
+	
+	indata.push_back(Value::create(1.0f));
+	indata.push_back(Value::create(1.0f));
+	
+	Tensor input(indata, {4,2});
+	
+	std::vector<ValuePtr> outdata;
+	
+	outdata.push_back(Value::create(0.0f));
+	
+	outdata.push_back(Value::create(1.0f));
+	
+	outdata.push_back(Value::create(1.0f));
+	
+	outdata.push_back(Value::create(0.0f));
+	
+	Tensor output(outdata, {4,1});
+	
+	std::vector<size_t> a = {2, 3};
+	std::vector<size_t> b = {4};
+	
+	//std::cout << printVector(Tensor::broadcastShape(a, b)) << std::endl;
+	
+	std::cout << printVectorData((input.broadcastAdd(output)).data()) << std::endl;
+	std::cout << printVectorData((input - output).data()) << std::endl;
+	
+	std::vector<ValuePtr> data1;
+
+	for(float i = 1; i <= 24; ++i)
+   	data1.push_back(Value::create(i));
+
+	Tensor x(data1, {2, 3, 4});	
+	
+	std::vector<ValuePtr> data2;
+
+	for(float i = 1; i <= 12; ++i)
+   	data2.push_back(Value::create(i));
+
+	Tensor y(data2, {3, 4});
+	
+	std::vector<ValuePtr> data3;
+	
+	for(float i = 1; i <= 4; ++i)
+   	data3.push_back(Value::create(i));
+
+	Tensor z(data3, {1, 4});
+	
+	
+	
+	for(size_t i = 0; i < x.getShape()[0]; i++)
+		for(size_t j = 0; j < x.getShape()[1]; j++)
+			for(size_t k = 0; k < x.getShape()[2]; k++){
+				//x.broadcastIndexMap(std::vector<size_t> idx{i, j, k});
+				//std::cout << printVector(std::vector<size_t> {i, j, k}) << std::endl;
+				std::cout << printVector(x.broadcastIndexMap(std::vector<size_t> {i, j, k})) << std::endl;
+			}
+	
+	std::cout << std::endl;
+	std::cout << std::endl;
+	
+	for(size_t i = 0; i < x.getShape()[0]; i++)
+		for(size_t j = 0; j < x.getShape()[1]; j++)
+			for(size_t k = 0; k < x.getShape()[2]; k++)
+				//y.broadcastIndexMap(std::vector<size_t> idx{i, j, k});
+				std::cout << printVector(z.broadcastIndexMap(std::vector<size_t> {i, j, k})) << std::endl;
+			
+			
+	
+	std::cout << printVectorData((x.broadcastAdd(z)).data()) << std::endl;
+	std::cout << printVectorData((x.broadcastAddExp(z)).data()) << std::endl;
+	std::cout << printVectorData((x + z).data()) << std::endl;
+	
+	
+	
+	
+	/*
+	auto mlp = MLP(2, {4, 1}, 0.1f);
+	
+	for(size_t i = 0; i < 10000; ++i){
+		mlp.zeroGrad();
+		
+		Tensor pred = mlp(input);
+		
+		ValuePtr loss = Value::create(0.0f);
+		
+		for(size_t i = 0; i < pred.getShape()[0]; i++){
+			ValuePtr c = Value::substract(pred.at({i, 0}), output.at({i, 0}));
+			ValuePtr d = Value::multiply(c, c);
+		
+			loss = Value::add(loss, d);
+		}
+		
+		loss->backprop();
+		
+		mlp.gradientDescentwithMomentum(0.9);
+		
+		if(i % 100 == 0)
+			std::cout << "Iteration: " << i << " " << "Loss: " << loss->data << " , " << Value::currentID << std::endl;
+	}
+	
+	std::cout << "\n\n\t Final Predictions\n\n" << std::endl;
+	
+	Tensor pred = mlp(input);
+	for(auto v : pred.data())
+		std::cout << v->data << std::endl;
+	*/
+}	
