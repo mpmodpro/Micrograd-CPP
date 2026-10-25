@@ -8,6 +8,7 @@
 #include <chrono>
 #include <iterator>
 #include <sstream>
+#include <cassert>
 
 
 class Value;
@@ -161,25 +162,32 @@ class Activation{
 			return Value::sigmoid(input);
 		}
 		
-		static inline std::unordered_map<ActivationType, std::function<ValuePtr(ValuePtr&)>> actfunc{
+		static inline std::unordered_map<ActivationType, std::function<ValuePtr(const ValuePtr&)>> actfunc{
 			{ActivationType::RELU, Relu},
 			{ActivationType::SIGMOID, Sigmoid}
 		};
 };
 
-float getRandomFloat(){
-	static std::random_device rd;
-	static std::mt19937 rng(rd());
-	static std::uniform_real_distribution dis(-1.0f,1.0f);
-	return dis(rng);
+template<typename T>
+std::string printVector(const std::vector<T>& vec){
+	std::ostringstream oss;
+	oss << "[";
+	for(size_t idx = 0; idx < vec.size(); ++idx){
+		oss << vec[idx] << (idx == vec.size() - 1 ? "" : ", ");
+	}
+	oss << "]";
+	return oss.str();
 }
 
-
-static std::vector<ValuePtr> randomWeights(size_t nin){
-	std::vector<ValuePtr> rnd;
-	for(size_t in = 0; in < nin; in++)
-		rnd.emplace_back(Value::create(getRandomFloat()));
-	return rnd;
+template<typename T>
+std::string printVectorData(const std::vector<T>& vec){
+	std::ostringstream oss;
+	oss << "[";
+	for(size_t idx = 0; idx < vec.size(); ++idx){
+		oss << vec[idx]->data << (idx == vec.size() - 1 ? "" : ", ");
+	}
+	oss << "]";
+	return oss.str();
 }
 
 class Tensor{
@@ -213,6 +221,32 @@ class Tensor{
 			if(shape.size() > 1)
 				for(size_t idx = shape.size() - 1; idx > 0; idx--)
 					stride[idx - 1] = stride[idx] * shape[idx];
+		}
+		
+		Tensor(std::vector<ValuePtr> data, std::vector<size_t> shape, std::vector<size_t> stride) : tensor(data), shape(shape), stride(stride){
+			if(shape.empty())
+				throw std::invalid_argument("Shape cannot be empty");
+			
+			if(stride.empty())
+				throw std::invalid_argument("Stride cannot be empty");
+			
+			if(shape.size() != stride.size())
+				throw std::invalid_argument("Shape and Stride mismatch");
+			
+			ne = 1;
+			for(auto& s : shape){
+				if(s == 0)
+					throw std::invalid_argument("A dimension can not be 0");
+				ne *= s;
+			}
+				
+			if (data.size() != ne)
+				throw std::invalid_argument("Either excess or deficient elements in the tensor");
+		}
+		
+		void backprop(){
+			for(const auto &v : data())
+				v->backprop();
 		}
 		
 		ValuePtr& at(std::vector<size_t> pos){
@@ -311,6 +345,43 @@ class Tensor{
 			return Tensor(tensor, newShape);
 		}
 		
+		Tensor transpose_2d() const{
+			if(ndim() != 2)
+				throw std::invalid_argument("transpose_2d only supports 2d vectors");
+				
+			std::vector<size_t> yshape = {getShape()[1], getShape()[0]};
+			std::vector<size_t> ystride = {getStride()[1], getStride()[0]};
+			
+			return Tensor(data(), yshape, ystride);
+		}
+		
+		bool iscontiguous() const{
+			std::vector<size_t> stride;
+		
+			stride.resize(ndim());
+			
+			stride[shape.size() - 1] = 1;
+			
+			if(shape.size() > 1)
+				for(size_t idx = shape.size() - 1; idx > 0; idx--)
+					stride[idx - 1] = stride[idx] * shape[idx];
+			
+			return (this->stride == stride);
+		}
+		
+		Tensor contiguous() const{
+			if(iscontiguous())
+				return *this;
+			
+			std::vector<ValuePtr> cont;
+			cont.reserve(numel());
+			
+			for(size_t i = 0; i < numel(); ++i){
+				cont.push_back(at(flat_to_multidimension(i)));
+			}
+			
+			return Tensor(cont, getShape());
+		}
 		
 		const std::vector<ValuePtr>& data() const{
 			return tensor;
@@ -365,6 +436,22 @@ class Tensor{
 			return op;
 		}
 		
+		static std::vector<size_t> broadcastIndexMap(std::vector<size_t> shape,std::vector<size_t> ip){
+			//std::cout << "\nOutput tensor size: " << getShape().size() << "\nInput Tensor size" << ip.size() << std::endl;
+			if(shape.size() > ip.size())
+				//std::cout << "Mapping Tensor\n Shape: " << ip.getShape() << "Index">>
+				throw std::invalid_argument("Broadcast index mapping cannot continue due to output tensor size being greater than it's broadcast tensor size");
+			size_t ds = ip.size() - shape.size();
+			std::vector<size_t> op(shape.size());
+			for(size_t idx = 0; idx < ip.size(); ++idx){
+				if(idx < ds)
+					continue;
+				
+				op[idx - ds] = (shape[idx - ds] == 1) ? 0 : ip[idx];
+			}
+			return op;
+		}
+		
 		Tensor broadcastAdd(Tensor other) const{
 			std::vector<size_t> shape = broadcastShape(getShape(), other.getShape());
 			
@@ -399,6 +486,16 @@ class Tensor{
 			for(size_t s : shape)
 				numel *= s;
 			return numel;
+		}
+		
+		std::vector<size_t> flat_to_multidimension(size_t& i) const{
+			std::vector<size_t> index(ndim());
+			size_t temp = i;
+			for(size_t j = getShape().size(); j-- > 0;){
+				index[j] = temp % getShape()[j];
+				temp = temp / getShape()[j];
+			}
+			return index;
 		}
 		
 		static std::vector<size_t> flat_to_multidimension(size_t& i, std::vector<size_t>& shape, std::vector<size_t> out_index){
@@ -450,7 +547,311 @@ class Tensor{
 		friend Tensor operator/(const Tensor& lhs, const Tensor& rhs){
 			return flat_elementwise_operation(Value::divide, lhs, rhs);
 		}
+		
+		Tensor matmul_2d(const Tensor& other) const{
+			std::vector<size_t> lstride = getStride();
+			std::vector<size_t> rstride = other.getStride();
+			
+			if(((ndim() != 2) || (other.ndim() != 2)) || (getShape()[1]) != other.getShape()[0])
+				throw std::invalid_argument("Conditions for Matrix multiplication 2D aren't met.");
+			
+			std::vector<size_t> shape = {getShape()[0], other.getShape()[1]};
+			std::vector<ValuePtr> op;
+			op.reserve(numel(shape));
+			
+			for(size_t i = 0; i < getShape()[0]; i++)
+				for(size_t j = 0; j < other.getShape()[1]; j++){
+					ValuePtr sum = nullptr;
+					for(size_t k = 0; k < getShape()[1]; k++){
+						ValuePtr prod = Value::multiply(data()[(i * lstride[0]) + k], other.data()[j + (k * rstride[0])]);
+						if(sum == nullptr)
+							sum = prod;
+						else
+							sum = Value::add(sum, prod);
+					}
+					op.push_back(sum);
+				}
+			return Tensor(op, shape);
+		}
+		
+		Tensor bmm_3d(const Tensor& other) const{
+			if(ndim() != 3 || other.ndim() != 3)
+				throw std::invalid_argument("bmm only handles 3 dimensions");
+				
+			if(getShape()[0] != other.getShape()[0])
+				throw std::invalid_argument("Batch shapes must be the same");
+			
+			if(getShape()[2] != other.getShape()[1])
+				throw std::invalid_argument("Inner matrix dimensions do no align for bmm");
+				
+			size_t B = getShape()[0];
+			size_t M = getShape()[1];
+			size_t K = getShape()[2];
+			size_t N = other.getShape()[2];
+			
+			std::vector<size_t> outShape = {B, M, N};
+			std::vector<ValuePtr> out_data;
+			out_data.reserve(B * M * N);
+			
+			size_t bstride1 = getStride()[0];
+			size_t bstride2 = other.getStride()[0];
+			size_t mstride = getStride()[1];//row stride of 1st matrix
+			size_t mk_stride = getStride()[2];//column stride of 1st matrix
+			size_t nstride = other.getStride()[1];//row stride of 2nd matrix
+			size_t nk_stride = other.getStride()[2];//column stride of 2nd matrix
+			
+			const auto& d1 = data();
+			const auto& d2 = other.data();
+			
+			for(size_t b = 0; b < B; ++b){
+				size_t b_off1 = b * bstride1;
+				size_t b_off2 = b * bstride2;
+				for(size_t i = 0; i < M; i++){
+					size_t row_off1 = b_off1 + (i * mstride);
+					for(size_t j = 0; j < N; j++){
+						size_t col_off2 = b_off2 + (j * nk_stride);
+					
+						ValuePtr sum = nullptr;
+						for(size_t k = 0; k < K; k++){
+							//ValuePtr prod = Value::multiply(data()[(b * bstride1) + (i * mstride) + (k * mk_stride)], other.data()[(b * bstride2) + ((j * nk_stride) + (k * nstride))]);
+							ValuePtr prod = Value::multiply(
+								d1[row_off1 + (k * mk_stride)],
+								d2[col_off2 + (k * nstride)]
+							);
+							
+							if(sum == nullptr)
+								sum = prod;
+							else
+								sum = Value::add(sum, prod);
+						}
+						out_data.push_back(sum);
+					}
+				}
+			}
+			return Tensor(out_data, outShape);
+		}
+		
+		Tensor unsqueeze(size_t dim) const{
+			if(dim > ndim())
+				throw std::invalid_argument("Unsqueeze dim out of range");
+			
+			std::vector<size_t> nshape = getShape();
+			nshape.insert(nshape.begin() + dim, 1);
+			
+			std::vector<size_t> nstride = getStride();
+			size_t insert_stride = (dim < nstride.size()) ? nstride[dim] : 1;
+			nstride.insert(nstride.begin() + dim, insert_stride);
+			
+			return Tensor(data(), nshape, nstride);
+		}
+		
+		Tensor squeeze(size_t dim) const{
+			if(dim >= ndim())
+				throw std::invalid_argument("Squeeze dim out of range");
+			
+			if(getShape()[dim] != 1)
+				throw std::invalid_argument("Cannot squeeze dim with shape != 1");
+				
+			std::vector<size_t> nshape = getShape();
+			std::vector<size_t> nstride = getStride();
+			
+			nshape.erase(nshape.begin() + dim);
+			nstride.erase(nstride.begin() + dim);
+			
+			return Tensor(data(), nshape, nstride);
+		}
+		
+		Tensor matmul(const Tensor& other) const{
+			size_t rank1 = ndim();
+			size_t rank2 = other.ndim();
+			
+			if(rank1 == 0 || rank2 == 0)
+				throw std::invalid_argument("0 dimensional matmul is not allowed");
+			
+			if((rank1 == 1) && (rank2 == 1)){
+				if(getShape()[0] != other.getShape()[0])
+					throw std::invalid_argument("1D matrix multiplication must have same same lengths for both matrices");	
+				
+				int K = getShape()[0];
+				
+				ValuePtr sum = nullptr;
+				for(size_t k = 0; k < K; k++){
+					//ValuePtr prod = Value::multiply(data()[(b * bstride1) + (i * mstride) + (k * mk_stride)], other.data()[(b * bstride2) + ((j * nk_stride) + (k * nstride))]);
+					ValuePtr prod = Value::multiply(
+						data()[(k * getStride()[0])],
+						other.data()[(k * other.getStride()[0])]
+					);
+					sum = (sum) ? Value::add(sum, prod) : prod;
+				}
+				return Tensor({sum}, {1});
+			}
+			
+			if((rank1 == 1) && (rank2 >= 2)){
+				Tensor x = unsqueeze(0);
+				Tensor res = x.matmul(other);
+				return res.squeeze(res.ndim() - 2);
+			}
+			
+			if((rank1 >= 2) && (rank2 == 1)){
+				Tensor x = other.unsqueeze(1);
+				Tensor res = this->matmul(x);
+				return res.squeeze(res.ndim() - 1);
+			}
+			
+			if((rank1 == 2) && (rank2 == 2)){
+				return this->matmul_2d(other);
+			}
+			
+			std::vector<size_t> batch_shape1(getShape().begin(), getShape().end() - 2);
+			std::vector<size_t> batch_shape2(other.getShape().begin(), other.getShape().end() - 2);
+			
+			std::vector<size_t> brd_batch_shape = broadcastShape(batch_shape1, batch_shape2);
+			
+			size_t tot_bat = numel(brd_batch_shape);
+			
+			if(getShape()[rank1 - 1] != other.getShape()[rank2 - 2])
+				throw std::invalid_argument("Inner matrix dimensions do no align for matmul");
+			
+			size_t M = getShape()[rank1 - 2];
+			size_t K = getShape()[rank1 - 1];
+			size_t N = other.getShape()[rank2 - 1];
+			
+			std::vector<size_t> outShape = brd_batch_shape;
+			outShape.push_back(M);
+			outShape.push_back(N);
+			
+			std::vector<ValuePtr> out_data;
+			out_data.reserve(numel(outShape));
+			
+			const auto& d1 = data();
+			const auto& d2 = other.data();
+			
+			size_t mstride = getStride()[rank1 - 2];//row stride of 1st matrix
+			size_t mk_stride = getStride()[rank1 - 1];//column stride of 1st matrix
+			size_t nstride = other.getStride()[rank2 - 2];//row stride of 2nd matrix
+			size_t nk_stride = other.getStride()[rank2 - 1];//column stride of 2nd matrix
+			
+			std::vector<size_t> b1_index;
+			b1_index.reserve(batch_shape1.size());
+			std::vector<size_t> b2_index;
+			b2_index.reserve(batch_shape2.size());
+			
+			std::vector<size_t> op_batch_idx(brd_batch_shape.size(), 0);
+			
+			for(size_t b = 0; b < tot_bat; ++b){
+				size_t b_off1 = 0;
+				size_t b_off2 = 0;
+				
+				op_batch_idx = flat_to_multidimension(b, brd_batch_shape, op_batch_idx);
+				
+				b1_index = broadcastIndexMap(batch_shape1, op_batch_idx);
+				b2_index = broadcastIndexMap(batch_shape2, op_batch_idx);
+				
+				for(size_t d = 0; d < batch_shape1.size(); ++d)
+					b_off1 += (b1_index[d] * getStride()[d]);
+				for(size_t d = 0; d < batch_shape2.size(); ++d)
+					b_off2 += (b2_index[d] * other.getStride()[d]);
+				
+				for(size_t i = 0; i < M; i++){
+					size_t row_off1 = b_off1 + (i * mstride);
+					for(size_t j = 0; j < N; j++){
+						size_t col_off2 = b_off2 + (j * nk_stride);
+					
+						ValuePtr sum = nullptr;
+						for(size_t k = 0; k < K; k++){
+							//ValuePtr prod = Value::multiply(data()[(b * bstride1) + (i * mstride) + (k * mk_stride)], other.data()[(b * bstride2) + ((j * nk_stride) + (k * nstride))]);
+							ValuePtr prod = Value::multiply(
+								d1[row_off1 + (k * mk_stride)],
+								d2[col_off2 + (k * nstride)]
+							);
+							
+							if(sum == nullptr)
+								sum = prod;
+							else
+								sum = Value::add(sum, prod);
+						}
+						out_data.push_back(sum);
+					}
+				}
+			}
+			return Tensor(out_data, outShape);
+		}
+		
+		Tensor sum() const{
+			ValuePtr s = nullptr;
+			for(ValuePtr v : data()){
+				if(!s) s = v;	
+				else s = Value::add(s, v);
+			}
+			
+			return Tensor({s}, {1});
+		}
+		
+		Tensor sum(size_t axis) const{
+			if(axis >= ndim())
+				throw std::invalid_argument("The axis given is more than the output dimension and therefore out of bounds");
+			
+			if(ndim() == 1)
+				return sum();
+		
+			std::vector<size_t> outShape;
+			outShape.reserve(ndim());
+			for(size_t i = 0; i < ndim(); ++i)
+				if(i != axis)
+					outShape.push_back(getShape()[i]);
+			
+			std::vector<ValuePtr> sumVector;
+			sumVector.reserve(numel(outShape));
+			
+			size_t totalOut = numel(outShape);
+			std::vector<size_t> out_idx(outShape.size(), 0);
+			std::vector<size_t> in_idx(ndim(), 0);
+			
+			for(size_t i = 0; i < totalOut; ++i){
+				out_idx = flat_to_multidimension(i, outShape, out_idx);
+				
+				size_t ctr = 0;
+				for(size_t d = 0; d < ndim(); ++d)
+					if(d != axis)
+						in_idx[d] = out_idx[ctr++];
+				
+				ValuePtr sum = nullptr;
+				
+				for(size_t j = 0; j < getShape()[axis]; ++j){
+					in_idx[axis] = j;
+					
+					if(!sum) sum = at(in_idx);
+					else sum = Value::add(sum, at(in_idx));
+				}
+				sumVector.push_back(sum);
+			}
+			return Tensor(sumVector, outShape);
+		}
 };
+
+float getRandomFloat(){
+	static std::random_device rd;
+	static std::mt19937 rng(rd());
+	static std::uniform_real_distribution dis(-1.0f,1.0f);
+	return dis(rng);
+}
+
+
+static std::vector<ValuePtr> randomWeights(size_t nin){
+	std::vector<ValuePtr> rnd;
+	for(size_t in = 0; in < nin; in++)
+		rnd.emplace_back(Value::create(getRandomFloat()));
+	return rnd;
+}
+
+static std::vector<ValuePtr> zeroBiases(size_t nout){
+	std::vector<ValuePtr> zero;
+	zero.reserve(nout);
+	for(size_t idx = 0; idx < nout; ++idx)
+		zero.emplace_back(Value::create(0.0f));
+	return zero;
+}
+
 
 class Neuron{
 	private:
@@ -468,7 +869,7 @@ class Neuron{
 		bias->grad = 0;
 	}
 	
-	 std::vector<ValuePtr> Parameters() const{
+	 std::vector<ValuePtr> Parameter() const{
 		std::vector<ValuePtr> out;
 		out.reserve(weights.numel() + 1);
 		const auto& weightData = weights.data();
@@ -502,8 +903,64 @@ class Neuron{
 	}
 };
 
+class Layer{
+	private: 
+		Tensor weights;
+		Tensor bias;
+		const ActivationType act;
+		size_t nin;
+		size_t nout;
+		
+	public:
+		Layer(size_t nin, size_t nout, const ActivationType& act) : weights(randomWeights(nin * nout), {nin, nout}), bias(zeroBiases(nout), {1, nout}), nin(nin), nout(nout), act(act){}
+		
+		Tensor operator()(const Tensor& x){
+			if(x.getShape()[1] != nin)
+				throw std::invalid_argument("Input tensor is not equal to layer's input size");
+			Tensor y = x.matmul_2d(weights) + bias;
+			
+			const auto& activationFun = Activation::actfunc.at(act);
+			
+			std::vector<ValuePtr> a;
+			a.reserve(y.numel());
+			
+			for(const ValuePtr& v : y.data())
+				a.push_back(activationFun(v));
+			
+			return Tensor(a, y.getShape());
+		}
+		
+		void zeroGrad(){
+			for(const ValuePtr& v : weights.data())
+				v->grad = 0;
+			for(const ValuePtr& v : bias.data())
+				v->grad = 0;
+		}
+		
+		std::vector<ValuePtr> Parameter() const{
+			std::vector<ValuePtr> params;
+			params.reserve(weights.numel() + bias.numel());
+			
+			params.insert(params.end(), weights.data().begin(), weights.data().end());
+			params.insert(params.end(), bias.data().begin(), bias.data().end());
+			
+			return params;
+		}
+		
+		void printParameters(){
+			printf("\nNo. of Parameters : %zu\n", weights.numel() + bias.numel());
+			for(size_t j = 0; j < nout; ++j){
+				std::cout << "Neuron : " << j << "\nWeights : [" << std::endl;
+				for(size_t i = 0; i < nin; ++i){
+					std::cout <<  weights.at({i, j})->data <<  ", ";
+				}
+				std::cout << "Bias : [" << bias.at({0, j})->data << std::endl;
+			}			
+		}
+		
+};
 
-
+/*
 class Layer{
 	public:
 		std::vector<Neuron> neurons;
@@ -553,7 +1010,7 @@ class Layer{
 			std::vector<ValuePtr> params;
 			params.reserve(nout * (nin + 1));
 			for(const auto& neuron : neurons)
-				for(const auto& p : neuron.Parameters())
+				for(const auto& p : neuron.Parameter())
 					params.push_back(p);
 					
 			return params;
@@ -570,7 +1027,7 @@ class Layer{
 		}
 		
 };
-
+*/
 /*
 class Tensor{
 private:
@@ -824,28 +1281,6 @@ Tensor getSample(const Tensor& x, size_t sampleIndex) {
     return Tensor(data, {features});
 }
 
-template<typename T>
-std::string printVector(const std::vector<T>& vec){
-	std::ostringstream oss;
-	oss << "[";
-	for(size_t idx = 0; idx < vec.size(); ++idx){
-		oss << vec[idx] << (idx == vec.size() - 1 ? "" : ", ");
-	}
-	oss << "]";
-	return oss.str();
-}
-
-template<typename T>
-std::string printVectorData(const std::vector<T>& vec){
-	std::ostringstream oss;
-	oss << "[";
-	for(size_t idx = 0; idx < vec.size(); ++idx){
-		oss << vec[idx]->data << (idx == vec.size() - 1 ? "" : ", ");
-	}
-	oss << "]";
-	return oss.str();
-}
-
 
 
 /*
@@ -979,7 +1414,7 @@ int main(){
 	std::vector<size_t> a = {2, 3};
 	std::vector<size_t> b = {4};
 	
-	//std::cout << printVector(Tensor::broadcastShape(a, b)) << std::endl;
+	//std::cout << printVector(Tensor::broadcastShape({4}, {})) << std::endl;
 	
 	std::cout << printVectorData((input.broadcastAdd(output)).data()) << std::endl;
 	std::cout << printVectorData((input - output).data()) << std::endl;
@@ -1031,7 +1466,138 @@ int main(){
 	std::cout << printVectorData((x + z).data()) << std::endl;
 	
 	
+	std::vector<ValuePtr> data4;
+
+	for(float i = 1; i <= 6; ++i)
+   	data4.push_back(Value::create(i));
 	
+	Tensor m(data4, {2, 3});
+	
+	std::vector<ValuePtr> data5;
+
+	for(float i = 1; i <= 6; ++i)
+   	data5.push_back(Value::create(i));
+
+	Tensor n(data5, {3, 2});
+	
+	std::cout << printVectorData((m.matmul_2d(n)).data()) << std::endl;
+	std::cout << printVector((m.transpose_2d()).getShape()) << std::endl;
+	std::cout << printVector((m.transpose_2d()).getStride()) << std::endl;
+	std::cout << printVector((n.transpose_2d()).getShape()) << std::endl;
+	std::cout << printVector((n.transpose_2d()).getStride()) << std::endl;
+
+	std::cout << "\n";
+	
+	Tensor trans1 = m.transpose_2d();
+	for(size_t i = 0; i < trans1.numel(); ++i){
+   	std::cout << trans1.at(trans1.flat_to_multidimension(i))->data << " ";
+	}
+	
+	std::cout << "\n";
+	
+	Tensor trans2 = n.transpose_2d();
+	for(size_t i = 0; i < trans2.numel(); ++i){
+   	std::cout << trans2.at(trans2.flat_to_multidimension(i))->data << " ";
+	}
+	
+	std::cout << "\n";
+	std::cout << m.iscontiguous() << std::endl;
+	
+	std::cout << trans1.iscontiguous() << std::endl;
+	
+	Tensor trans = trans1.contiguous();
+	
+	std::cout << trans.iscontiguous() << std::endl;
+	
+	std::cout << printVectorData(trans.data()) << std::endl;
+	
+	
+	std::vector<ValuePtr> data6;
+
+	for(float i = 1; i <= 4; ++i)
+   	data6.push_back(Value::create(i));
+	
+	Tensor sum(data6, {2,2});
+	
+	std::cout << printVectorData(sum.sum().data()) << std::endl;
+	std::cout << printVectorData(m.sum(1).data()) << std::endl;
+	
+	std::vector<ValuePtr> data7;
+
+	for(float i = 1; i <= 12; ++i)
+   	data7.push_back(Value::create(i));
+	
+	Tensor matmul1(data7, {2, 1, 2, 3});
+	
+	std::vector<ValuePtr> data8;
+
+	for(float i = 1; i <= 18; ++i)
+   	data8.push_back(Value::create(i));
+	
+	Tensor matmul2(data8, {3, 3, 2});
+	
+	std::cout << printVectorData((matmul1.matmul(matmul2)).data()) << std::endl;
+	std::cout << printVector((matmul1.matmul(matmul2)).getShape()) << std::endl;
+	
+	Tensor result = matmul1.matmul(matmul2);
+	Tensor loss = result.sum();
+	loss.backprop();
+
+	// Print gradients to ensure backpropagation flowed to both inputs
+	std::cout << "matmul1 gradients:\n";
+	for (const auto& v : matmul1.data()) {
+   	std::cout << v->grad << " ";
+	}
+	std::cout << "\n\nmatmul2 gradients:\n";
+	for (const auto& v : matmul2.data()) {
+   	std::cout << v->grad << " ";
+	}
+	std::cout << std::endl;
+	/*
+	std::vector<ValuePtr> data9;
+
+	for(float i = 1; i <= 3; ++i)
+   	data9.push_back(Value::create(i));
+	
+	Tensor u(data9, {3});
+	Tensor v(data9, {3});
+	Tensor dot = u.matmul(v); // shape: [1]
+	std::cout << printVectorData(dot.data()) << "\t" << printVector(dot.getShape()) <<std::endl;
+	
+	Tensor q(data9, {3});
+	Tensor M(data5, {3, 2});
+	Tensor qm = q.matmul(M); // shape: [2]
+	std::cout << printVectorData(qm.data()) << "\t" << printVector(qm.getShape()) <<std::endl;
+	
+	std::vector<ValuePtr> data10;
+
+	for(float i = 1; i <= 2; ++i)
+   	data10.push_back(Value::create(i));
+	
+	Tensor BM(data7, {2, 3, 2});
+	Tensor w(data10, {2});
+	Tensor bmv = BM.matmul(w); // shape: [2, 3]
+	std::cout << printVectorData(bmv.data()) << "\t" << printVector(bmv.getShape()) <<std::endl;
+	*/
+	
+	// 1. Vector dot product: [3] @ [3] -> [1]
+	Tensor v1({Value::create(1), Value::create(2), Value::create(3)}, {3});
+	Tensor v2({Value::create(4), Value::create(5), Value::create(6)}, {3});
+	Tensor dot = v1.matmul(v2);
+	assert(dot.getShape() == std::vector<size_t>({1}));
+	assert(dot.data()[0]->data == 32.0f); // 1*4 + 2*5 + 3*6 = 32
+
+	// 2. Vector @ Matrix: [3] @ [3, 2] -> [2]
+	std::vector<ValuePtr> m_vals;
+	for(float i = 1; i <= 6; ++i) m_vals.push_back(Value::create(i));
+		Tensor M(m_vals, {3, 2});
+		Tensor vm = v1.matmul(M);
+		assert(vm.getShape() == std::vector<size_t>({2}));
+
+	// 3. Matrix @ Vector: [2, 3] @ [3] -> [2]
+	Tensor mv = M.transpose_2d().matmul(v1); // [2, 3] @ [3] -> [2]
+	assert(mv.getShape() == std::vector<size_t>({2}));
+
 	
 	/*
 	auto mlp = MLP(2, {4, 1}, 0.1f);
@@ -1052,7 +1618,7 @@ int main(){
 		
 		loss->backprop();
 		
-		mlp.gradientDescentwithMomentum(0.9);
+		mlp.Adam();
 		
 		if(i % 100 == 0)
 			std::cout << "Iteration: " << i << " " << "Loss: " << loss->data << " , " << Value::currentID << std::endl;
